@@ -1,3 +1,3 @@
 # BatchForecasting
 
-The term batch forecasting is used when we apply forecasting algorithms on multiple datasets.
+The term batch forecasting is used when forecasting algorithms are applied on multiple time series.
