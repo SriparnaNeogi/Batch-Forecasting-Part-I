@@ -1,0 +1,126 @@
+library(dplyr)
+library(tidyr)
+library(padr)
+library(reshape2)
+library(smooth)
+library(forecast)
+library(tstools)
+library(thief)										
+library(tsintermittent)
+library(nnfor)
+library(stringr)
+library(padr)
+library(nnfor)
+
+
+#IMPORT
+df=read.csv("Acc_MC_F7_EU.csv")
+class(df[3,1])
+#drop SHIP-CRD and PLATFORM
+df[,2] <- NULL
+df[,2] <- NULL
+
+#FACTOR TO NUMERIC, BLANKS TO NA,REMOVES 1ST COLUMN AUTOMATICALLY
+df1 = as.data.frame(apply(df[2:ncol(df)], 2, function(x) {
+  y = str_replace_all(x[], ",", "") #remove commas
+  return(as.numeric(y)) #then convert
+}))
+
+#ATTACHING THE PRIMARY BASE PRODUCT COLUMN AGAIN to DF1
+df1_full = cbind(df[,1],df1)
+names(df1_full)[1]  <- "Primary.Base.Product"
+n1 = ncol(df1_full)
+#REMOVING ROWS WITH ALL NA
+df2_full = df1_full[rowSums(is.na(df1_full[,2:n1])) < n1-1, ]
+#FILTER ALL ROWS WITH ONLY NA AND CSV IT
+df3_na = anti_join(df1_full, df2_full, by = "Primary.Base.Product")
+write.table(df3_na, file = "Acc_All_NA_EU.csv",sep=",",row.names=FALSE)
+#CONVERT ALL NAs to ZEROES
+df2_full = df2_full %>% fill_by_value(value=0)
+#CONVERT DF2_FULL INTO MATRIX TO BE USED LATER
+df2_full_m = as.matrix(df2_full)
+#DROPPING COLUMN 1 FROM FILTERED Dataframe
+df2=df2_full[,2:ncol(df2_full)]
+
+#RESHAPING THE DF AND ARRANGING by CONVERTING IT INTO A MATRIX
+df2m = as.matrix(df2)
+df2mt = t(df2m)
+h=4
+n = nrow(df2mt)
+c = ncol(df2mt)
+
+##########AUTO ARIMA
+f_ar = matrix(nrow = h, ncol = c)
+f_naive = matrix(nrow = h, ncol = c)
+f_ets = matrix(nrow = h, ncol = c)
+f_nn = matrix(nrow = h, ncol = c)
+
+for (i in 1:c) {
+  f_ar[,i] = forecast(auto.arima(df2mt[(1:(n-h)),i], seasonal=TRUE), h=h)$mean
+  f_naive[,i] = naive(df2mt[1:(n-h),i], h=h)$mean
+  f_ets[,i] = forecast(ets(ts(df2mt[(1:(n-h)),i], frequency=3), model="ZZZ"),h=h)$mean
+  f_nn[,i] = forecast(nnetar(ts(df2mt[(1:(n-h)),i], frequency=3)),h=h)$mean
+}
+f_ar[f_ar<0] <- 0
+f_ets[f_ets<0] <- 0
+f_nn[f_nn<0] <- 0
+
+write.table(f_ar, file = "ARIMA_F_EU.csv", sep=",",row.names = FALSE)
+write.table(f_ets, file = "ETS_F_EU.csv", sep=",",row.names = FALSE)
+write.table(f_ets, file = "NN_F_EU.csv", sep=",",row.names = FALSE)
+
+##############Accuracy#####################
+acc_ar = matrix(nrow = c, ncol = 5)
+acc_naive = matrix(nrow = c, ncol = 5)
+acc_ets = matrix(nrow = c, ncol = 5)
+acc_nn = matrix(nrow = c, ncol = 5)
+acc_relmae = matrix(nrow=c,ncol=1)
+for (i in 1:c){										
+  acc_ar[i,] = accuracy (df2mt[(n-h+1):n,i], f_ar[,i])										
+  acc_naive[i,]  = accuracy (df2mt[(n-h+1):n,i], f_naive[,i])
+  acc_ets[i,]  = accuracy (df2mt[(n-h+1):n,i], f_ets[,i])
+  acc_nn[i,]  = accuracy (df2mt[(n-h+1):n,i], f_nn[,i])
+  acc_relmae[i,] = acc_ar[i,3]/acc_naive[i,3]	
+}		
+
+###### RELMAE = MAE(ARIMA)/MAE(NAIVE) #############
+########## IF RELMAE <1 THEN ARIMA WINS ##########
+########## IF RELMAE >1 THEN NAIVE WINS ##########
+
+acc_ar_full = (cbind(df2_full_m[,1],acc_ar))
+acc_naive_full = (cbind(df2_full_m[,1],acc_naive))
+acc_ets_full = (cbind(df2_full_m[,1],acc_ets))
+acc_nn_full = (cbind(df2_full_m[,1],acc_nn))
+
+
+colnames(acc_ar_full) <- c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_naive_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ets_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_nn_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+
+
+write.table(acc_ar_full, file = "ARIMA_MC_F7_EU.csv", sep=",",row.names = FALSE)
+write.table(acc_naive_full, file = "NAIVE_MC_F7_EU.csv", sep=",",row.names = FALSE)
+write.table(acc_ets_full, file = "ETS_MC_F7_EU.csv", sep=",",row.names = FALSE)
+write.table(acc_nn_full, file = "NN_MC_F7_EU.csv", sep=",",row.names = FALSE)
+
+
+acc_ar_full_df = as.data.frame(read.csv("ARIMA_MC_F7_EU.csv"))
+acc_naive_full_df = as.data.frame(read.csv("NAIVE_MC_F7_EU.csv"))
+acc_ets_full_df = as.data.frame(read.csv("ETS_MC_F7_EU.csv"))
+acc_nn_full_df = as.data.frame(read.csv("NN_MC_F7_EU.csv"))
+
+
+acc_ar_full2 = acc_ar_full_df %>% mutate(MAPEless30= if_else(MAPE<=30,"Yes", "No"))
+acc_naive_full2 = acc_naive_full_df %>% mutate(MAPEless30= if_else(MAPE<=30,"Yes", "No"))
+acc_ets_full2 = acc_ets_full_df %>% mutate(MAPEless30= if_else(MAPE<=30,"Yes", "No"))
+acc_nn_full2 = acc_nn_full_df %>% mutate(MAPEless30= if_else(MAPE<=30,"Yes", "No"))
+
+
+table(acc_ar_full2$MAPEless30)
+table(acc_naive_full2$MAPEless30)
+table(acc_ets_full2$MAPEless30)
+table(acc_nn_full2$MAPEless30)
+
+
+
